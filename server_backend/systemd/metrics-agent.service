@@ -1,0 +1,13 @@
+[Unit]
+Description=Metrics Agent Sender
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/home/ubuntu/metrics-agent
+ExecStart=/home/ubuntu/metrics-agent/.venv/bin/python -u /home/ubuntu/metrics-agent/agent/agent.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

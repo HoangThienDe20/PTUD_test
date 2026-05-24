@@ -1,0 +1,18 @@
+[Unit]
+Description=Model Backend API Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/model_backend
+EnvironmentFile=/opt/model_backend/.env
+Environment=HOME=/opt/model_backend
+Environment=XDG_CACHE_HOME=/opt/model_backend/.cache
+ExecStart=/opt/model_backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8200 --workers 1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

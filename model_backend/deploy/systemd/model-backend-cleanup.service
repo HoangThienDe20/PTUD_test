@@ -1,0 +1,8 @@
+[Unit]
+Description=Model Backend artifact cleanup
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/model_backend
+ExecStart=/opt/model_backend/.venv/bin/python cleanup_models.py --keep-xgb 5 --keep-tft 3 --max-age-days 60 --execute

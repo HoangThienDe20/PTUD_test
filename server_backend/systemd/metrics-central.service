@@ -1,0 +1,14 @@
+[Unit]
+Description=Metrics Central FastAPI (PostgreSQL)
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/metrics-central
+EnvironmentFile=/home/ubuntu/metrics-central/.env
+ExecStart=/home/ubuntu/metrics-central/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run model backend cleanup daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=10m
+Unit=model-backend-cleanup.service
+
+[Install]
+WantedBy=timers.target

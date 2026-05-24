@@ -1,0 +1,14 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+requests==2.32.3
+xgboost==3.2.0
+numpy==1.26.4
+scipy==1.11.4
+pandas==2.2.3
+meteostat==1.6.8
+torch==2.11.0
+lightning==2.6.1
+pytorch-forecasting==1.7.0
+scikit-learn==1.5.2
