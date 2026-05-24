@@ -5,6 +5,7 @@ import json
 from iot_backend.config import (
     MQTT_CLIENT_ID,
     MQTT_COMMAND_TOPIC_PREFIX,
+    MQTT_DEVICE_STATE_TOPIC,
     MQTT_HOST,
     MQTT_PASSWORD,
     MQTT_PORT,
@@ -24,7 +25,10 @@ last_wifi_topic = ""
 last_wifi_payload = ""
 last_threshold_topic = ""
 last_threshold_payload = ""
+last_state_topic = ""
+last_state_payload = ""
 wifi_scan_cache = {}
+device_state_cache = {}
 
 
 def parse_sensor_payload(raw_payload, fallback_sensor_id):
@@ -78,6 +82,13 @@ def sensor_id_from_topic(topic):
 def wifi_sensor_id_from_topic(topic):
     parts = topic.split("/")
     if len(parts) >= 4 and parts[0] == "ptdl" and parts[1] == "devices" and parts[3] == "wifi-list":
+        return parts[2]
+    return None
+
+
+def state_sensor_id_from_topic(topic):
+    parts = topic.split("/")
+    if len(parts) >= 4 and parts[0] == "ptdl" and parts[1] == "devices" and parts[3] == "state":
         return parts[2]
     return None
 
@@ -219,6 +230,31 @@ def get_wifi_scan_result(sensor_id):
     return wifi_scan_cache.get(sensor_id)
 
 
+def get_device_state(sensor_id):
+    return device_state_cache.get(sensor_id)
+
+
+def get_wifi_status(sensor_id):
+    cached_state = get_device_state(sensor_id) or {}
+    payload = cached_state.get("payload") if isinstance(cached_state, dict) else {}
+    wifi = payload.get("wifi") if isinstance(payload, dict) else {}
+    if not isinstance(wifi, dict):
+        wifi = {}
+
+    return {
+        "status": "ok" if payload else "empty",
+        "sensor_id": sensor_id,
+        "received_at": cached_state.get("received_at"),
+        "timestamp": payload.get("timestamp") if isinstance(payload, dict) else None,
+        "connected": bool(wifi.get("connected", False)),
+        "ssid": wifi.get("ssid") or "",
+        "ip": wifi.get("ip") or "",
+        "rssi": wifi.get("rssi"),
+        "configured_ssid": wifi.get("configured_ssid") or "",
+        "state": payload.get("state") if isinstance(payload, dict) else None,
+    }
+
+
 def start_mqtt(on_reading, on_device_state=None):
     global client, connected
     import paho.mqtt.client as mqtt
@@ -237,9 +273,10 @@ def start_mqtt(on_reading, on_device_state=None):
             connected = True
             mqtt_client.subscribe(MQTT_SENSOR_TOPIC)
             mqtt_client.subscribe(MQTT_WIFI_LIST_TOPIC)
+            mqtt_client.subscribe(MQTT_DEVICE_STATE_TOPIC)
             print(
                 f"[MQTT] Connected to {MQTT_HOST}:{MQTT_PORT}, subscribed to "
-                f"{MQTT_SENSOR_TOPIC} and {MQTT_WIFI_LIST_TOPIC}"
+                f"{MQTT_SENSOR_TOPIC}, {MQTT_WIFI_LIST_TOPIC}, and {MQTT_DEVICE_STATE_TOPIC}"
             )
         else:
             connected = False
@@ -251,9 +288,10 @@ def start_mqtt(on_reading, on_device_state=None):
         print(f"[MQTT] Disconnected: {reason_code}")
 
     def handle_message(_mqtt_client, _userdata, message):
-        global last_reading_topic, last_reading_payload
+        global last_reading_topic, last_reading_payload, last_state_topic, last_state_payload
         raw_payload = message.payload.decode("utf-8", errors="ignore")
         wifi_sensor_id = wifi_sensor_id_from_topic(message.topic)
+        device_state_sensor_id = state_sensor_id_from_topic(message.topic)
 
         if wifi_sensor_id:
             try:
@@ -272,6 +310,30 @@ def start_mqtt(on_reading, on_device_state=None):
             networks = parsed.get("networks") if isinstance(parsed, dict) else []
             count = len(networks) if isinstance(networks, list) else 0
             print(f"[WIFI SCAN] cached networks count={count} for {wifi_sensor_id}")
+            return
+
+        if device_state_sensor_id:
+            try:
+                parsed = json.loads(raw_payload)
+            except json.JSONDecodeError:
+                print(f"[MQTT] Device state payload skipped (invalid JSON): {raw_payload}")
+                return
+            if not isinstance(parsed, dict):
+                print(f"[MQTT] Device state payload skipped (not object): {raw_payload}")
+                return
+
+            last_state_topic = message.topic
+            last_state_payload = raw_payload
+            device_state_cache[device_state_sensor_id] = {
+                "sensor_id": device_state_sensor_id,
+                "received_at": datetime.now(timezone.utc).isoformat(),
+                "payload": parsed,
+            }
+            if on_device_state:
+                try:
+                    on_device_state(device_state_sensor_id, parsed)
+                except Exception as exc:
+                    print(f"[MQTT] Device state callback failed: {exc}")
             return
 
         sensor_id = sensor_id_from_topic(message.topic)
@@ -316,5 +378,8 @@ def status():
         "last_wifi_payload": last_wifi_payload,
         "last_threshold_topic": last_threshold_topic,
         "last_threshold_payload": last_threshold_payload,
+        "last_state_topic": last_state_topic,
+        "last_state_payload": last_state_payload,
         "wifi_scan_cache_count": len(wifi_scan_cache),
+        "device_state_cache_count": len(device_state_cache),
     }

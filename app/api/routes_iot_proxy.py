@@ -213,6 +213,22 @@ async def proxy_wifi_list_by_device_source(
     return result
 
 
+@devices_router.get("/{device_id}/wifi-status")
+async def proxy_wifi_status_by_device_source(
+    device_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user
+    auth_header = request.headers.get("Authorization", "")
+    bearer_token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else None
+    print(f"[WIFI API] wifi-status called device_id={device_id}")
+    return _get_iot(
+        path=f"/api/devices/{quote(device_id, safe='')}/wifi-status",
+        bearer_token=bearer_token,
+    )
+
+
 @devices_router.post("/{device_id}/wifi-config")
 async def proxy_wifi_config_by_device_source(
     device_id: str,

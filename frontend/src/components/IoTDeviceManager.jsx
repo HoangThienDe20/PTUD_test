@@ -138,6 +138,7 @@ export default function IoTDeviceManager() {
   const [wifiForm, setWifiForm] = useState({ ssid: '', password: '' })
   const [wifiNetworks, setWifiNetworks] = useState([])
   const [wifiReceivedAt, setWifiReceivedAt] = useState('')
+  const [wifiStatus, setWifiStatus] = useState(null)
   const [wifiLoading, setWifiLoading] = useState(false)
   const [wifiSubmitting, setWifiSubmitting] = useState(false)
   const [deviceCommandLoading, setDeviceCommandLoading] = useState({})
@@ -777,6 +778,16 @@ export default function IoTDeviceManager() {
     return response?.data || {}
   }
 
+  const loadWifiConnectionStatus = async (sensorId) => {
+    const encodedSource = encodeURIComponent(sensorId)
+    const url = `/api/devices/${encodedSource}/wifi-status`
+    console.log(`[WIFI UI] GET ${url}`)
+    const response = await api.get(url)
+    console.log('[WIFI UI] wifi-status response=', response?.data)
+    setWifiStatus(response?.data || null)
+    return response?.data || {}
+  }
+
   const requestWifiScan = async (sensorId) => {
     const encodedSource = encodeURIComponent(sensorId)
     const url = `/api/devices/${encodedSource}/scan-wifi`
@@ -794,12 +805,16 @@ export default function IoTDeviceManager() {
     setWifiForm({ ssid: '', password: '' })
     setWifiNetworks([])
     setWifiReceivedAt('')
+    setWifiStatus(null)
     setShowWifiModal(true)
     setWifiLoading(true)
     try {
       await requestWifiScan(device.source)
       await waitForWifiScan()
-      await loadWifiScanResult(device.source, { notifyIfEmpty: true })
+      await Promise.all([
+        loadWifiScanResult(device.source, { notifyIfEmpty: true }),
+        loadWifiConnectionStatus(device.source),
+      ])
     } catch (err) {
       notify('Scan WiFi failed: ' + wifiErrorMessage(err))
     } finally {
@@ -812,6 +827,7 @@ export default function IoTDeviceManager() {
     setSelectedDeviceForWifi(null)
     setWifiNetworks([])
     setWifiReceivedAt('')
+    setWifiStatus(null)
     setWifiForm({ ssid: '', password: '' })
   }
 
@@ -821,7 +837,10 @@ export default function IoTDeviceManager() {
     try {
       await requestWifiScan(selectedDeviceForWifi.source)
       await waitForWifiScan()
-      await loadWifiScanResult(selectedDeviceForWifi.source, { notifyIfEmpty: true })
+      await Promise.all([
+        loadWifiScanResult(selectedDeviceForWifi.source, { notifyIfEmpty: true }),
+        loadWifiConnectionStatus(selectedDeviceForWifi.source),
+      ])
     } catch (err) {
       notify('Scan WiFi failed: ' + wifiErrorMessage(err))
     } finally {
@@ -893,7 +912,10 @@ export default function IoTDeviceManager() {
   useEffect(() => {
     if (!showWifiModal || !selectedDeviceForWifi) return
     const interval = setInterval(() => {
-      loadWifiScanResult(selectedDeviceForWifi.source).catch(() => {})
+      Promise.allSettled([
+        loadWifiScanResult(selectedDeviceForWifi.source),
+        loadWifiConnectionStatus(selectedDeviceForWifi.source),
+      ]).catch(() => {})
     }, 4000)
     return () => clearInterval(interval)
   }, [showWifiModal, selectedDeviceForWifi])
@@ -2093,6 +2115,24 @@ export default function IoTDeviceManager() {
             </div>
 
             <div className="space-y-4">
+              <div className="rounded-lg border border-emerald-400/20 bg-emerald-500/10 px-4 py-3">
+                <p className="text-sm text-emerald-200">
+                  {wifiStatus?.connected
+                    ? `ESP32 đang nối WiFi: ${wifiStatus?.ssid || '(không rõ SSID)'}`
+                    : 'ESP32 hiện chưa có WiFi đang kết nối'}
+                </p>
+                <p className="mt-1 text-xs text-emerald-100/80">
+                  {wifiStatus?.ip ? `IP: ${wifiStatus.ip}` : 'Chưa có IP'}
+                  {typeof wifiStatus?.rssi === 'number' ? ` • RSSI: ${wifiStatus.rssi} dBm` : ''}
+                  {wifiStatus?.configured_ssid ? ` • WiFi đã lưu: ${wifiStatus.configured_ssid}` : ''}
+                </p>
+                <p className="mt-1 text-xs text-emerald-100/60">
+                  {wifiStatus?.received_at
+                    ? `Trạng thái nhận lúc: ${formatVNTime(wifiStatus.received_at, true)} (GMT+7)`
+                    : 'Chưa nhận được trạng thái WiFi từ ESP32'}
+                </p>
+              </div>
+
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-gray-300">Danh sách WiFi gần ESP32</p>
                 <button

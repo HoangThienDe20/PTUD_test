@@ -60,10 +60,10 @@ const unsigned long AUTO_CONTROL_INTERVAL_MS = 5000;
 const unsigned long RELAY_CHANGE_MIN_INTERVAL_MS = 10000;
 
 // ===== Auto mode hysteresis =====
-const float FAN_ON_TEMP = 31.0;
-const float FAN_OFF_TEMP = 29.0;
-const float FOG_ON_HUMIDITY = 45.0;
-const float FOG_OFF_HUMIDITY = 55.0;
+const float FAN_ON_TEMP = 50.0;
+const float FAN_OFF_TEMP = 15.0;
+const float FOG_ON_HUMIDITY = 40.0;
+const float FOG_OFF_HUMIDITY = 60.0;
 
 const bool RUN_RELAY_TEST_ON_BOOT = false;
 
@@ -88,6 +88,18 @@ bool fogState = false;
 bool autoMode = true;
 bool timeSynced = false;
 
+struct ThresholdConfig {
+  bool loaded = false;
+  bool alertEnabled = false;
+  bool hasMin = false;
+  bool hasMax = false;
+  float minValue = 0.0;
+  float maxValue = 0.0;
+};
+
+ThresholdConfig temperatureThresholdConfig;
+ThresholdConfig humidityThresholdConfig;
+
 bool connectWiFi(bool force = false, bool allowPortalFallback = false);
 void connectMQTT();
 bool applyWiFiCredentials(String newSsid, String newPassword, const char* source);
@@ -96,6 +108,8 @@ void publishWifiList();
 void handleCommandPayload(const String& payload);
 String metricStorageSuffix(const String& metricType);
 void saveThresholdConfig(const String& metricType, JsonObjectConst configObj);
+ThresholdConfig loadThresholdConfig(const String& metricType);
+void refreshThresholdConfigs();
 bool hasStoredWiFiCredentials();
 bool startWiFiConfigPortal();
 void syncConnectedWiFiToPreferences(const char* source);
@@ -319,6 +333,59 @@ void saveThresholdConfig(const String& metricType, JsonObjectConst configObj) {
   Serial.print(storageKey);
   Serial.print(": ");
   Serial.println(jsonValue);
+
+  refreshThresholdConfigs();
+}
+
+ThresholdConfig loadThresholdConfig(const String& metricType) {
+  ThresholdConfig config;
+  String storageKey = "cfg_" + metricStorageSuffix(metricType);
+
+  preferences.begin(ALERT_CONFIG_NAMESPACE, true);
+  String raw = preferences.getString(storageKey.c_str(), "");
+  preferences.end();
+
+  if (raw.length() == 0) {
+    return config;
+  }
+
+  DynamicJsonDocument doc(256);
+  DeserializationError err = deserializeJson(doc, raw);
+  if (err) {
+    Serial.print("[ALERT CFG] Failed to parse ");
+    Serial.print(storageKey);
+    Serial.print(": ");
+    Serial.println(err.c_str());
+    return config;
+  }
+
+  JsonObjectConst root = doc.as<JsonObjectConst>();
+  config.loaded = true;
+  config.alertEnabled = root["alert_enabled"] | false;
+  config.hasMin = !root["min_threshold"].isNull();
+  config.hasMax = !root["max_threshold"].isNull();
+  if (config.hasMin) {
+    config.minValue = root["min_threshold"].as<float>();
+  }
+  if (config.hasMax) {
+    config.maxValue = root["max_threshold"].as<float>();
+  }
+  return config;
+}
+
+void refreshThresholdConfigs() {
+  temperatureThresholdConfig = loadThresholdConfig("temperature");
+  humidityThresholdConfig = loadThresholdConfig("humidity");
+
+  Serial.print("[ALERT CFG] Temperature loaded=");
+  Serial.print(temperatureThresholdConfig.loaded ? "true" : "false");
+  Serial.print(" alert_enabled=");
+  Serial.println(temperatureThresholdConfig.alertEnabled ? "true" : "false");
+
+  Serial.print("[ALERT CFG] Humidity loaded=");
+  Serial.print(humidityThresholdConfig.loaded ? "true" : "false");
+  Serial.print(" alert_enabled=");
+  Serial.println(humidityThresholdConfig.alertEnabled ? "true" : "false");
 }
 
 // ===== Relay =====
@@ -622,16 +689,24 @@ void connectMQTT() {
 void publishDeviceState() {
   if (!mqtt.connected()) return;
 
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<512> doc;
   doc["sensor_id"] = SENSOR_ID;
   doc["location"] = LOCATION;
+  doc["timestamp"] = getFormattedTime();
 
   JsonObject state = doc.createNestedObject("state");
   state["fan"] = fanState;
   state["fog"] = fogState;
   state["auto"] = autoMode;
 
-  char payload[256];
+  JsonObject wifi = doc.createNestedObject("wifi");
+  wifi["connected"] = WiFi.status() == WL_CONNECTED;
+  wifi["ssid"] = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "";
+  wifi["configured_ssid"] = wifiSsid;
+  wifi["ip"] = WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "";
+  wifi["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
+
+  char payload[512];
   serializeJson(doc, payload, sizeof(payload));
 
   bool ok = mqtt.publish(MQTT_STATUS_TOPIC, payload, true);
@@ -905,20 +980,61 @@ void handleAutoMode(float temperature, float humidity) {
   lastAutoControlMs = now;
 
   bool changedAny = false;
+  float fanOnThreshold = FAN_ON_TEMP;
+  float fanOffThreshold = FAN_OFF_TEMP;
+  float fogOnThreshold = FOG_ON_HUMIDITY;
+  float fogOffThreshold = FOG_OFF_HUMIDITY;
 
-  if (temperature >= FAN_ON_TEMP && !fanState) {
-    Serial.println("[AUTO] Temp >= 31 -> Fan ON");
+  if (temperatureThresholdConfig.alertEnabled) {
+    if (temperatureThresholdConfig.hasMax) {
+      fanOnThreshold = temperatureThresholdConfig.maxValue;
+    }
+    if (temperatureThresholdConfig.hasMin) {
+      fanOffThreshold = temperatureThresholdConfig.minValue;
+    } else if (temperatureThresholdConfig.hasMax) {
+      fanOffThreshold = temperatureThresholdConfig.maxValue - 2.0;
+    }
+  }
+
+  if (humidityThresholdConfig.alertEnabled) {
+    if (humidityThresholdConfig.hasMin) {
+      fogOnThreshold = humidityThresholdConfig.minValue;
+    }
+    if (humidityThresholdConfig.hasMax) {
+      fogOffThreshold = humidityThresholdConfig.maxValue;
+    } else if (humidityThresholdConfig.hasMin) {
+      fogOffThreshold = humidityThresholdConfig.minValue + 10.0;
+    }
+  }
+
+  if (fanOffThreshold > fanOnThreshold) {
+    fanOffThreshold = fanOnThreshold;
+  }
+  if (fogOffThreshold < fogOnThreshold) {
+    fogOffThreshold = fogOnThreshold;
+  }
+
+  if (temperature >= fanOnThreshold && !fanState) {
+    Serial.print("[AUTO] Temp >= ");
+    Serial.print(fanOnThreshold, 1);
+    Serial.println(" -> Fan ON");
     changedAny = setFan(true) || changedAny;
-  } else if (temperature <= FAN_OFF_TEMP && fanState) {
-    Serial.println("[AUTO] Temp <= 29 -> Fan OFF");
+  } else if (temperature <= fanOffThreshold && fanState) {
+    Serial.print("[AUTO] Temp <= ");
+    Serial.print(fanOffThreshold, 1);
+    Serial.println(" -> Fan OFF");
     changedAny = setFan(false) || changedAny;
   }
 
-  if (humidity <= FOG_ON_HUMIDITY && !fogState) {
-    Serial.println("[AUTO] Hum <= 45 -> Fog ON");
+  if (humidity <= fogOnThreshold && !fogState) {
+    Serial.print("[AUTO] Hum <= ");
+    Serial.print(fogOnThreshold, 1);
+    Serial.println(" -> Fog ON");
     changedAny = setFog(true) || changedAny;
-  } else if (humidity >= FOG_OFF_HUMIDITY && fogState) {
-    Serial.println("[AUTO] Hum >= 55 -> Fog OFF");
+  } else if (humidity >= fogOffThreshold && fogState) {
+    Serial.print("[AUTO] Hum >= ");
+    Serial.print(fogOffThreshold, 1);
+    Serial.println(" -> Fog OFF");
     changedAny = setFog(false) || changedAny;
   }
 
@@ -951,6 +1067,7 @@ void setup() {
   Serial.println(DHT_PIN);
 
   loadWiFiCredentials();
+  refreshThresholdConfigs();
 
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(mqttCallback);

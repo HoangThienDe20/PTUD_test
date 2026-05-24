@@ -205,3 +205,13 @@ async def get_wifi_scan(
         "timestamp": payload.get("timestamp"),
         "networks": networks,
     }
+
+
+@router.get("/{sensor_id}/wifi-status")
+async def get_wifi_status_by_sensor(
+    sensor_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _check_sensor_access(sensor_id, user, db)
+    return mqtt_service.get_wifi_status(sensor_id=sensor_id)

@@ -58,6 +58,7 @@ MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "iot-backend")
 MQTT_SENSOR_TOPIC = os.getenv("MQTT_SENSOR_TOPIC", os.getenv("MQTT_TOPIC", "sensors/+/data"))
 MQTT_COMMAND_TOPIC_PREFIX = os.getenv("MQTT_COMMAND_TOPIC_PREFIX", "ptdl/devices")
 MQTT_WIFI_LIST_TOPIC = os.getenv("MQTT_WIFI_LIST_TOPIC", f"{MQTT_COMMAND_TOPIC_PREFIX}/+/wifi-list")
+MQTT_DEVICE_STATE_TOPIC = os.getenv("MQTT_DEVICE_STATE_TOPIC", f"{MQTT_COMMAND_TOPIC_PREFIX}/+/state")
 
 # Device automation thresholds
 FAN_ON_TEMP = float(os.getenv("FAN_ON_TEMP", "32"))
@@ -93,4 +94,3 @@ def get_database_url() -> str:
     username_enc = quote_plus(db_username)
     password_enc = quote_plus(db_password)
     return f"postgresql+psycopg2://{username_enc}:{password_enc}@{db_host}:{db_port}/{db_database}"
-
